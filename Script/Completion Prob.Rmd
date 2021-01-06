@@ -1,0 +1,306 @@
+---
+title: "Completion Prob"
+author: "Jill Reiner"
+date: "12/13/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(dplyr)
+library(tidyverse)
+library(tidyr)
+library(stringr)
+library(janitor)
+library(mgcv)
+library(caret)
+library(car)
+```
+
+Completion Probability model: what is the probability that player x will catch the ball?
+
+
+-> Only want from pass_forward to pass_outcome_x (and then maybe from pass_arrived to pass_outcome_x since those are 2 diff things apparently) 
+
+
+-> Will assess coverage ability of defender from moment pass is thrown to pass arrival
+
+```{r}
+min_opp_dists$pos_def[min_opp_dists$name_def == "Jessie Bates"] <- "S"
+min_opp_dists$pos_def[min_opp_dists$name_def == "Minkah Fitzpatrick"] <- "S"
+min_opp_dists$pos_def[min_opp_dists$name_def == "Derwin James"] <- "S"
+min_opp_dists$pos_def[min_opp_dists$name_def == "Holton Hill"] <- "DB"
+min_opp_dists$pos_def[min_opp_dists$name_def == "Isaiah Johnson"] <- "S"
+min_opp_dists$pos_def[min_opp_dists$name_def == "Maurice Smith"] <- "DB"
+
+min_opp_dists$name_def[min_opp_dists$name_def == "Trey Walker"] <- "Tracy Walker"
+```
+
+```{r}
+non_intended_rec_cp <- min_opp_dists %>%
+  filter(pos_off %in% c("WR", "TE", "RB", "FB", "HB"),
+         event == "pass_arrived",
+         is_targ_receiver == 0) %>%
+  mutate(pass_success = ifelse(event %in% c("pass_outcome_caught", "pass_outcome_touchdown"), 1, 0))
+
+#non_intended_rec_cp$pass_success = as.factor(non_intended_rec_cp$pass_success)
+```
+
+```{r}
+intended_rec_cp <- min_opp_dists %>% #lets just start with the intended receiver and get those CPs
+  filter(pos_off %in% c("WR", "TE", "RB", "FB", "HB"),
+         pos_def %in% c("CB", "DB", "FS", "S", "SS"),
+         !is.na(route), #filtering to those running routes
+         is_targ_receiver == 1,
+         grepl("pass_outcome_", event)) %>% #event == "pass_forward" |  | grepl("pass_outcome_", event))
+  drop_na(dist_to_qb_off) #%>%
+  #mutate(pass_success = ifelse(event %in% c("pass_outcome_caught", "pass_outcome_touchdown"), 1, 0))
+
+intended_rec_cp$pass_success = as.factor(intended_rec_cp$pass_success)
+
+intended_rec_cp$pos_def[intended_rec_cp$name_def == "Jessie Bates"] <- "S"
+intended_rec_cp$pos_def[intended_rec_cp$name_def == "Minkah Fitzpatrick"] <- "S"
+intended_rec_cp$pos_def[intended_rec_cp$name_def == "Derwin James"] <- "S"
+intended_rec_cp$pos_def[intended_rec_cp$name_def == "Holton Hill"] <- "DB"
+intended_rec_cp$pos_def[intended_rec_cp$name_def == "Isaiah Johnson"] <- "S"
+intended_rec_cp$pos_def[intended_rec_cp$name_def == "Maurice Smith"] <- "DB"
+```
+
+```{r}
+#set.seed(1220)
+
+#train_i <- createDataPartition(y = intended_rec_cp$pass_success, p = 0.75, list = FALSE) %>% as.numeric()
+
+#train_cp_data <- intended_rec_cp[train_i,]
+#test_cp_data <- intended_rec_cp[-train_i,]
+```
+
+```{r}
+#table(train_cp_data$pass_success)
+#table(test_cp_data$pass_success)
+```
+pass_success ~ closest_opp_distance + dist_to_qb_off + dist_to_qb_def + x_off + y_off + s_off*s_def + dir_off*dir_def + o_off*o_def + dis_off*dis_def
+
+pass_success ~ closest_opp_distance + dist_to_qb_off + dist_to_qb_def + x_off + y_off + s_def
+```{r}
+set.seed(1999)
+
+init_cp_train <- train(pass_success ~ closest_opp_distance + dist_to_qb_off + dist_to_qb_def + x_off + y_off + s_off*s_def + dir_off*dir_def + o_off*o_def + dis_off*dis_def, 
+                            data = intended_rec_cp, method = "glm",
+                            trControl = trainControl("cv", number = 10),
+                            preProcess = c("center", "scale"),
+                            na.action = na.omit,
+                            family = "binomial")
+```
+
+```{r}
+init_cp_train
+```
+
+```{r}
+ggplot(varImp(init_cp_train))
+```
+ + x_off + y_off + yardline_number + yards_to_go + s_off*s_def + dir_off*dir_def + o_off*o_def 
+ 
+ + yardline_number + yards_to_go + 
+```{r}
+init_cp <- glm(pass_success ~ closest_opp_distance + dist_to_qb_off + dist_to_qb_def + x_off + y_off + s_def, 
+               family = "binomial", data = intended_rec_cp)
+
+summary(init_cp)
+```
+
+```{r}
+#train_cp_data$cp_preds <- predict(init_cp, newdata = train_cp_data, type = "response")
+#test_cp_data$cp_preds <- predict(init_cp, newdata = test_cp_data, type = "response")
+```
+
+```{r}
+intended_rec_cp$cp_preds <- predict(init_cp, newdata = intended_rec_cp, type = "response")
+```
+
+```{r}
+summarized_cp <- intended_rec_cp %>%
+  mutate(pass_success = as.numeric(pass_success),
+    comp_difference = cp_preds - pass_success)
+```
+
+i also like this stat but its only for targ receiver
+```{r}
+summarized_cp <- intended_rec_cp %>%
+  mutate(pass_success = as.numeric(as.character(pass_success)),
+    comp_difference = as.numeric(as.character(cp_preds - pass_success))) %>%
+  group_by(name_def, nfl_id_def, pos_def) %>%
+  summarise(completions_taken_away = sum(comp_difference)) #%>%
+  #left_join(times_closest_defender, by = c("name_def", "nfl_id_def"))
+```
+
+pass forward to pass arrived
+```{r}
+intended_rec_pf_to_pa <- min_opp_dists %>% #lets just start with the intended receiver and get those CPs
+  filter(pos_off %in% c("WR", "TE", "RB", "FB", "HB"),
+         #pos_def %in% c("CB", "DB", "FS", "S", "SS"),
+         !is.na(route),
+         is_targ_receiver == 1,
+         event == "pass_forward" | event == "pass_arrived")
+
+intended_rec_pf_to_pa$pass_success = as.factor(intended_rec_pf_to_pa$pass_success)
+
+intended_rec_pf_to_pa$pos_def[intended_rec_pf_to_pa$name_def == "Jessie Bates"] <- "S"
+intended_rec_pf_to_pa$pos_def[intended_rec_pf_to_pa$name_def == "Minkah Fitzpatrick"] <- "S"
+intended_rec_pf_to_pa$pos_def[intended_rec_pf_to_pa$name_def == "Derwin James"] <- "S"
+intended_rec_pf_to_pa$pos_def[intended_rec_pf_to_pa$name_def == "Holton Hill"] <- "DB"
+intended_rec_pf_to_pa$pos_def[intended_rec_pf_to_pa$name_def == "Isaiah Johnson"] <- "S"
+intended_rec_pf_to_pa$pos_def[intended_rec_pf_to_pa$name_def == "Maurice Smith"] <- "DB"
+
+intended_rec_pf_to_pa$name_def[intended_rec_pf_to_pa$name_def == "Trey Walker"] <- "Tracy Walker"
+```
+
+```{r}
+set.seed(1999)
+
+cp_train_pf_pa <- train(pass_success ~ closest_opp_distance + dist_to_qb_off + dist_to_qb_def + x_off + y_off + s_off*s_def + dis_off*dis_def, 
+                            data = intended_rec_pf_to_pa, method = "glm",
+                            trControl = trainControl("cv", number = 10),
+                            preProcess = c("center", "scale"),
+                            na.action = na.omit,
+                            family = "binomial")
+```
+
+```{r}
+cp_train_pf_pa
+ggplot(varImp(cp_train_pf_pa))
+```
+
+```{r}
+cp_pf_pa <- glm(pass_success ~ closest_opp_distance + dist_to_qb_off + x_off + y_off + s_def, 
+               family = "binomial", data = intended_rec_pf_to_pa)
+```
+
+```{r}
+all_receivers_pf_to_pa <- min_opp_dists %>% #so this includes all receivers not just intended
+  filter(pos_off %in% c("WR", "TE", "RB", "FB", "HB"),
+         #pos_def %in% c("CB", "DB", "FS", "S", "SS"),
+         !is.na(route),
+         #is_targ_receiver == 1,
+         event == "pass_forward" | event == "pass_arrived")
+
+all_receivers_pf_to_pa$pos_def[all_receivers_pf_to_pa$name_def == "Jessie Bates"] <- "S"
+all_receivers_pf_to_pa$pos_def[all_receivers_pf_to_pa$name_def == "Minkah Fitzpatrick"] <- "S"
+all_receivers_pf_to_pa$pos_def[all_receivers_pf_to_pa$name_def == "Derwin James"] <- "S"
+all_receivers_pf_to_pa$pos_def[all_receivers_pf_to_pa$name_def == "Holton Hill"] <- "DB"
+all_receivers_pf_to_pa$pos_def[all_receivers_pf_to_pa$name_def == "Isaiah Johnson"] <- "S"
+all_receivers_pf_to_pa$pos_def[all_receivers_pf_to_pa$name_def == "Maurice Smith"] <- "DB"
+
+all_receivers_pf_to_pa$name_def[all_receivers_pf_to_pa$name_def == "Trey Walker"] <- "Tracy Walker"
+```
+
+```{r}
+all_receivers_pf_to_pa$cp_preds <- predict(cp_pf_pa, newdata = all_receivers_pf_to_pa, type = "response")
+```
+
+```{r}
+same_defenders_all_receivers <- all_receivers_pf_to_pa %>%
+  group_by(game_id, play_id, name_off) %>%
+  mutate(unique_defender = n_distinct(nfl_id_def)) %>%
+  ungroup() %>%
+  filter(unique_defender == 1)
+```
+
+```{r}
+summarized_all_receivers <- same_defenders_all_receivers %>%
+  group_by(game_id, play_id, name_off) %>%
+  mutate(cp_diff =  cp_preds - lag(cp_preds, default = cp_preds[1])) %>%
+  ungroup()
+```
+
+i like this
+```{r}
+comp_pred_stats_pf_to_arrival <- summarized_all_receivers %>%
+  group_by(nfl_id_def, name_def, pos_def) %>%
+  summarise(hypothetical_closeout = sum(cp_diff))
+```
+
+pass arrived to pass outcome_x
+```{r}
+intended_rec_pa_to_po <- min_opp_dists %>% #lets just start with the intended receiver and get those CPs
+  filter(pos_off %in% c("WR", "TE", "RB", "FB", "HB"),
+         pos_def %in% c("CB", "DB", "FS", "S", "SS"),
+         !is.na(route),
+         is_targ_receiver == 1,
+         event == "pass_arrived" | grepl("pass_outcome_", event))
+
+intended_rec_pa_to_po$pass_success = as.factor(intended_rec_pa_to_po$pass_success)
+```
+
+```{r}
+set.seed(1999)
+
+cp_train_pa_po <- train(pass_success ~ closest_opp_distance + dist_to_qb_off + dist_to_qb_def + x_off + y_off + s_off*s_def + dis_off*dis_def, 
+                            data = intended_rec_pa_to_po, method = "glm",
+                            trControl = trainControl("cv", number = 10),
+                            preProcess = c("center", "scale"),
+                            na.action = na.omit,
+                            family = "binomial")
+```
+
+```{r}
+cp_train_pa_po
+ggplot(varImp(cp_train_pa_po))
+```
+
+```{r}
+cp_pa_po <- glm(pass_success ~ closest_opp_distance + dist_to_qb_off + dist_to_qb_def + x_off + y_off + s_def, 
+               family = "binomial", data = intended_rec_pa_to_po)
+```
+
+```{r}
+passes_defended_data <- min_opp_dists %>% #so this includes all receivers not just intended
+  filter(pos_off %in% c("WR", "TE", "RB", "FB", "HB"),
+         pos_def %in% c("CB", "DB", "FS", "S", "SS"),
+         !is.na(route),
+         #is_targ_receiver == 1,
+         event == "pass_arrived" | grepl("pass_outcome_", event)) #%>%
+  #mutate(pass_success = ifelse(event %in% c("pass_outcome_caught", "pass_outcome_touchdown"), 1, 0))
+```
+
+```{r}
+passes_defended_data$pos_def[passes_defended_data$name_def == "Jessie Bates"] <- "S"
+passes_defended_data$pos_def[passes_defended_data$name_def == "Minkah Fitzpatrick"] <- "S"
+passes_defended_data$pos_def[passes_defended_data$name_def == "Derwin James"] <- "S"
+passes_defended_data$pos_def[passes_defended_data$name_def == "Holton Hill"] <- "DB"
+passes_defended_data$pos_def[passes_defended_data$name_def == "Isaiah Johnson"] <- "S"
+passes_defended_data$pos_def[passes_defended_data$name_def == "Maurice Smith"] <- "DB"
+
+passes_defended_data$name_def[passes_defended_data$name_def == "Trey Walker"] <- "Tracy Walker"
+
+passes_defended_data$cp_preds <- predict(cp_pa_po, newdata = passes_defended_data, type = "response")
+```
+
+```{r}
+same_defenders_non_rec <- passes_defended_data %>%
+  group_by(game_id, play_id, name_off) %>%
+  mutate(unique_defender = n_distinct(nfl_id_def)) %>%
+  ungroup() %>%
+  filter(unique_defender == 1)
+```
+
+```{r}
+summarized_non_rec <- same_defenders_non_rec %>%
+  group_by(game_id, play_id, name_off) %>%
+  mutate(cp_diff = cp_preds - lag(cp_preds, default = cp_preds[1])) %>%
+  ungroup()
+```
+
+
+
+
+i like this stat
+```{r}
+comp_pred_stats <- summarized_non_rec %>%
+  group_by(nfl_id_def, name_def, pos_def) %>%
+  summarise(hypothetical_passes_defended = sum(cp_diff))
+```
+
+

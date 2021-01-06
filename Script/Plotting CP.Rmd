@@ -1,0 +1,512 @@
+---
+title: "Plotting CP"
+author: "Jill Reiner"
+date: "12/31/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+game_id == 2018091609 & play_id == 1964
+
+try 2018091001 1964
+
+1964 is good
+
+29
+
+```{r}
+ball_cp <- ball %>%
+  filter(event == "pass_arrived" | grepl("pass_outcome_", event)) %>%
+  left_join(summarized_non_rec, by = c("game_id",
+                                   "play_id",
+                                   "frame_id",
+                                   "event"))
+```
+
+```{r}
+full_tracking_1964 <- full_tracking %>%
+  filter(game_id == 2018092310 & play_id == 1964,
+         event == "pass_arrived" | grepl("pass_outcome_", event)) %>%
+  select(game_id, play_id, frame_id, event, route, yardline_number, display_name, nfl_id, jersey_number, position, team, x, y, o)
+```
+
+```{r}
+cp_1964 <- same_defenders_intended_rec %>% #pass arrived to pass outcome
+  filter(game_id == 2018092310 & play_id == 1964) %>%
+  select(game_id, play_id, frame_id, event, is_targ_receiver, cp_preds, name_off) %>%
+  rename(display_name = name_off)
+```
+
+```{r}
+full_tracking_1964 <- full_tracking_1964 %>%
+  left_join(cp_1964, by = c("game_id",
+                                   "play_id",
+                                   "frame_id",
+                                   "event",
+                                   "display_name"))
+```
+
+```{r}
+ft_1964_pa <- full_tracking_1964 %>%
+  filter(event == "pass_arrived")
+
+ft_1964_pa_off <- ft_1964_pa %>%
+  filter(team == "home",
+         position != "QB",
+         display_name != "Cooper Kupp")
+
+ft_1964_pa_def <- ft_1964_pa %>%
+  filter(team == "away")
+
+ft_1964_pa_qb <- ft_1964_pa %>%
+  filter(position == "QB")
+
+ft_1964_pa_fb <- ft_1964_pa %>%
+  filter(team == "football")
+
+ft_1964_pa_kupp <- ft_1964_pa %>%
+  filter(display_name == "Cooper Kupp")
+```
+
+```{r}
+ft_1964_po <- full_tracking_1964 %>%
+  filter(event == "pass_outcome_caught")
+
+ft_1964_po_off <- ft_1964_po %>%
+  filter(team == "home",
+         position != "QB",
+         display_name != "Cooper Kupp")
+
+ft_1964_po_def <- ft_1964_po %>%
+  filter(team == "away")
+
+ft_1964_po_qb <- ft_1964_po %>%
+  filter(position == "QB")
+
+ft_1964_po_fb <- ft_1964_po %>%
+  filter(team == "football")
+
+ft_1964_po_kupp <- ft_1964_po %>%
+  filter(display_name == "Cooper Kupp")
+```
+
+At pass_arrived:
+```{r}
+cols_fill <- c("#b3995d", "#97233f", "#663300")
+cols_col <- c("#000000", "#663300", "#000000")
+
+# General field boundaries
+xmin <- 0
+xmax <- 160/3
+hash.right <- 38.35
+hash.left <- 12
+hash.width <- 3.3
+
+# Specific boundaries for a given play
+ymin <- max(round(min(ft_1964_pf_off$x, na.rm = TRUE) - 10, -1), 0)
+ymax <- min(round(max(ft_1964_pf_off$x, na.rm = TRUE) + 10, -1), 120)
+
+#hash marks
+df.hash <- expand.grid(x = c(0, 23.36667, 29.96667, xmax), y = (10:110))
+df.hash <- df.hash %>% filter(!(floor(y %% 5) == 0))
+df.hash <- df.hash %>% filter(y < ymax, y > ymin)
+
+p1964_arrived <- ggplot()+
+  
+#setting size and color parameters
+scale_size_manual(values = c(10.5), guide = FALSE) + 
+scale_shape_manual(values = c(21, 16, 21), guide = FALSE) +
+scale_fill_manual(values = cols_fill, guide = FALSE) + 
+scale_colour_manual(values = cols_col, guide = FALSE) +
+
+#adding hash marks
+annotate("text", x = df.hash$x[df.hash$x < 55/2], 
+       y = df.hash$y[df.hash$x < 55/2], label = "_", hjust = 0, vjust = -0.2) + 
+annotate("text", x = df.hash$x[df.hash$x > 55/2], 
+       y = df.hash$y[df.hash$x > 55/2], label = "_", hjust = 1, vjust = -0.2) + 
+
+#adding yard lines
+annotate("segment", x = xmin, 
+       y = seq(max(10, ymin), min(ymax, 110), by = 5), 
+       xend =  xmax, 
+       yend = seq(max(10, ymin), min(ymax, 110), by = 5)) + 
+  
+#adding field yardline text
+annotate("text", x = rep(hash.left, 11), y = seq(10, 110, by = 10), 
+       label = c("G   ", seq(10, 50, by = 10), rev(seq(10, 40, by = 10)), "   G"), 
+       angle = 270, size = 4) + 
+annotate("text", x = rep((xmax - hash.left), 11), y = seq(10, 110, by = 10), 
+       label = c("   G", seq(10, 50, by = 10), rev(seq(10, 40, by = 10)), "G   "), 
+       angle = 90, size = 4) + 
+
+#adding field exterior
+annotate("segment", x = c(xmin, xmin, xmax, xmax), 
+       y = c(ymin, ymax, ymax, ymin), 
+       xend = c(xmin, xmax, xmax, xmin), 
+       yend = c(ymax, ymax, ymin, ymin), colour = "black") + 
+  
+#adding players
+geom_point(data = ft_1964_pa_kupp,
+           mapping = aes(x = (xmax-y), y = x, 
+                                  shape = team,
+                                  fill = team,
+                                  group = nfl_id,
+                                  size = factor(cp_preds),
+                                  colour = team),
+           alpha = 0.8) +  
+  
+geom_point(data = ft_1964_pa_off,
+           mapping = aes(x = (xmax-y), y = x),
+           color = "#002244",
+           size = 5,
+           alpha = 0.8) + 
+  
+geom_point(data = ft_1964_pa_def,
+           mapping = aes(x = (xmax-y), y = x),
+           color = "#0073cf",
+           size = 5,
+           alpha = 0.8) +  
+  
+geom_point(data = ft_1964_pa_qb,
+           mapping = aes(x = (xmax-y), y = x),
+           color = "#002244",
+           size = 5,
+           alpha = 0.8) +  
+  
+geom_point(data = ft_1964_pa_fb,
+           mapping = aes(x = (xmax-y), y = x),
+           color = "#663300",
+           size = 4) +  
+  
+geom_text(data = ft_1964_pa, aes(x = (xmax-y), y = x, label = jersey_number), colour = "white", 
+        vjust = 0.36, size = 3.5) + 
+  
+theme_bw() + 
+  
+theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+      axis.title.y=element_blank(),
+      axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+      panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank()) +
+  
+  labs(title = "Pass Arrived", caption = "J.Goff pass short left to C.Kupp ran ob at LAC 42 for 4 yards (D.King).
+       P(Completion) difference: -0.4%") +
+
+#applying plot limits
+ylim(ymin, ymax) + 
+coord_fixed()
+
+p1964_arrived
+```
+
+At pass_outcome_x:
+```{r}
+cols_fill <- c("#b3995d", "#97233f", "#663300")
+cols_col <- c("#000000", "#663300", "#000000")
+
+# General field boundaries
+xmin <- 0
+xmax <- 160/3
+hash.right <- 38.35
+hash.left <- 12
+hash.width <- 3.3
+
+# Specific boundaries for a given play
+ymin <- max(round(min(ft_1964_pf_off$x, na.rm = TRUE) - 10, -1), 0)
+ymax <- min(round(max(ft_1964_pf_off$x, na.rm = TRUE) + 10, -1), 120)
+
+#hash marks
+df.hash <- expand.grid(x = c(0, 23.36667, 29.96667, xmax), y = (10:110))
+df.hash <- df.hash %>% filter(!(floor(y %% 5) == 0))
+df.hash <- df.hash %>% filter(y < ymax, y > ymin)
+
+p1964_caught <- ggplot()+
+  
+#setting size and color parameters
+scale_size_manual(values = c(8), guide = FALSE) + 
+scale_shape_manual(values = c(21, 16, 21), guide = FALSE) +
+scale_fill_manual(values = cols_fill, guide = FALSE) + 
+scale_colour_manual(values = cols_col, guide = FALSE) +
+
+#adding hash marks
+annotate("text", x = df.hash$x[df.hash$x < 55/2], 
+       y = df.hash$y[df.hash$x < 55/2], label = "_", hjust = 0, vjust = -0.2) + 
+annotate("text", x = df.hash$x[df.hash$x > 55/2], 
+       y = df.hash$y[df.hash$x > 55/2], label = "_", hjust = 1, vjust = -0.2) + 
+
+#adding yard lines
+annotate("segment", x = xmin, 
+       y = seq(max(10, ymin), min(ymax, 110), by = 5), 
+       xend =  xmax, 
+       yend = seq(max(10, ymin), min(ymax, 110), by = 5)) + 
+  
+#adding field yardline text
+annotate("text", x = rep(hash.left, 11), y = seq(10, 110, by = 10), 
+       label = c("G   ", seq(10, 50, by = 10), rev(seq(10, 40, by = 10)), "   G"), 
+       angle = 270, size = 4) + 
+annotate("text", x = rep((xmax - hash.left), 11), y = seq(10, 110, by = 10), 
+       label = c("   G", seq(10, 50, by = 10), rev(seq(10, 40, by = 10)), "G   "), 
+       angle = 90, size = 4) + 
+
+#adding field exterior
+annotate("segment", x = c(xmin, xmin, xmax, xmax), 
+       y = c(ymin, ymax, ymax, ymin), 
+       xend = c(xmin, xmax, xmax, xmin), 
+       yend = c(ymax, ymax, ymin, ymin), colour = "black") + 
+  
+#adding players
+geom_point(data = ft_1964_po_kupp,
+           mapping = aes(x = (xmax-y), y = x, 
+                                  shape = team,
+                                  fill = team,
+                                  group = nfl_id,
+                                  size = factor(cp_preds),
+                                  colour = team),
+           alpha = 0.8) +  
+  
+geom_point(data = ft_1964_po_off,
+           mapping = aes(x = (xmax-y), y = x),
+           color = "#002244",
+           size = 5,
+           alpha = 0.8) +  
+  
+geom_point(data = ft_1964_po_def,
+           mapping = aes(x = (xmax-y), y = x),
+           color = "#0073cf",
+           size = 5,
+           alpha = 0.8) +  
+  
+geom_point(data = ft_1964_po_qb,
+           mapping = aes(x = (xmax-y), y = x),
+           color = "#002244",
+           size = 5,
+           alpha = 0.8) +  
+  
+geom_point(data = ft_1964_po_fb,
+           mapping = aes(x = (xmax-y), y = x),
+           color = "#663300",
+           size = 4) +  
+  
+geom_text(data = ft_1964_po, aes(x = (xmax-y), y = x, label = jersey_number), colour = "white", 
+        vjust = 0.36, size = 3.5) + 
+  
+theme_bw() + 
+  
+theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+      axis.title.y=element_blank(),
+      axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+      panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank()) +
+  
+  labs(title = "Pass Outcome Caught", caption = "J.Goff pass short left to C.Kupp ran ob at LAC 42 for 4 yards (D.King).
+       P(Completion) difference: -3.4%") +
+
+#applying plot limits
+ylim(ymin, ymax) + 
+coord_fixed()
+
+p1964_caught
+```
+
+```{r}
+p1964_cp2 <- p1964_arrived + p1964_caught
+ggsave("p1964_cp2.png", p1964_cp2)
+```
+
+```{r}
+full_tracking_1964_pf_to_pa <- full_tracking %>%
+  filter(game_id == 2018092310 & play_id == 1964,
+         event == "pass_forward" | event == "pass_arrived") %>%
+  select(game_id, play_id, frame_id, event, route, yardline_number, display_name, nfl_id, jersey_number, position, team, x, y, o)
+```
+
+```{r}
+cp_1964_pf_to_pa <- intended_rec_pf_to_pa %>% #pass arrived to pass outcome
+  filter(game_id == 2018092310 & play_id == 1964) %>%
+  select(game_id, play_id, frame_id, event, is_targ_receiver, cp_preds, name_off) %>%
+  rename(display_name = name_off)
+```
+
+```{r}
+full_tracking_1964_pf_to_pa <- full_tracking_1964_pf_to_pa %>%
+  left_join(cp_1964_pf_to_pa, by = c("game_id",
+                                   "play_id",
+                                   "frame_id",
+                                   "event",
+                                   "display_name"))
+```
+
+```{r}
+ft_1964_pf <- full_tracking_1964_pf_to_pa %>%
+  filter(event == "pass_forward")
+
+ft_1964_pf_off <- ft_1964_pf %>%
+  filter(team == "home",
+         position != "QB",
+         display_name != "Cooper Kupp")
+
+ft_1964_pf_def <- ft_1964_pf %>%
+  filter(team == "away")
+
+ft_1964_pf_qb <- ft_1964_pf %>%
+  filter(position == "QB")
+
+ft_1964_pf_fb <- ft_1964_pf %>%
+  filter(team == "football")
+
+ft_1964_pf_kupp <- ft_1964_pf %>%
+  filter(display_name == "Cooper Kupp")
+```
+
+```{r}
+ft_1964_pa <- full_tracking_1964_pf_to_pa %>%
+  filter(event == "pass_arrived")
+
+ft_1964_pa_off <- ft_1964_pa %>%
+  filter(team == "home",
+         position != "QB",
+         display_name != "Cooper Kupp")
+
+ft_1964_pa_def <- ft_1964_pa %>%
+  filter(team == "away")
+
+ft_1964_pa_qb <- ft_1964_pa %>%
+  filter(position == "QB")
+
+ft_1964_pa_fb <- ft_1964_pa %>%
+  filter(team == "football")
+
+ft_1964_pa_kupp <- ft_1964_pa %>%
+  filter(display_name == "Cooper Kupp")
+```
+
+At pass_forward:
+```{r}
+cols_fill <- c("#b3995d", "#97233f", "#663300")
+cols_col <- c("#000000", "#663300", "#000000")
+
+# General field boundaries
+xmin <- 0
+xmax <- 160/3
+hash.right <- 38.35
+hash.left <- 12
+hash.width <- 3.3
+
+# Specific boundaries for a given play
+ymin <- max(round(min(ft_1964_pf_off$x, na.rm = TRUE) - 10, -1), 0)
+ymax <- min(round(max(ft_1964_pf_off$x, na.rm = TRUE) + 10, -1), 120)
+
+#hash marks
+df.hash <- expand.grid(x = c(0, 23.36667, 29.96667, xmax), y = (10:110))
+df.hash <- df.hash %>% filter(!(floor(y %% 5) == 0))
+df.hash <- df.hash %>% filter(y < ymax, y > ymin)
+
+p1964_pf <- ggplot()+
+  
+#setting size and color parameters
+scale_size_manual(values = c(11), guide = FALSE) + 
+scale_shape_manual(values = c(21, 16, 21), guide = FALSE) +
+scale_fill_manual(values = cols_fill, guide = FALSE) + 
+scale_colour_manual(values = cols_col, guide = FALSE) +
+
+#adding hash marks
+annotate("text", x = df.hash$x[df.hash$x < 55/2], 
+       y = df.hash$y[df.hash$x < 55/2], label = "_", hjust = 0, vjust = -0.2) + 
+annotate("text", x = df.hash$x[df.hash$x > 55/2], 
+       y = df.hash$y[df.hash$x > 55/2], label = "_", hjust = 1, vjust = -0.2) + 
+
+#adding yard lines
+annotate("segment", x = xmin, 
+       y = seq(max(10, ymin), min(ymax, 110), by = 5), 
+       xend =  xmax, 
+       yend = seq(max(10, ymin), min(ymax, 110), by = 5)) + 
+  
+#adding field yardline text
+annotate("text", x = rep(hash.left, 11), y = seq(10, 110, by = 10), 
+       label = c("G   ", seq(10, 50, by = 10), rev(seq(10, 40, by = 10)), "   G"), 
+       angle = 270, size = 4) + 
+annotate("text", x = rep((xmax - hash.left), 11), y = seq(10, 110, by = 10), 
+       label = c("   G", seq(10, 50, by = 10), rev(seq(10, 40, by = 10)), "G   "), 
+       angle = 90, size = 4) + 
+
+#adding field exterior
+annotate("segment", x = c(xmin, xmin, xmax, xmax), 
+       y = c(ymin, ymax, ymax, ymin), 
+       xend = c(xmin, xmax, xmax, xmin), 
+       yend = c(ymax, ymax, ymin, ymin), colour = "black") + 
+  
+#adding players
+geom_point(data = ft_1964_pf_kupp,
+           mapping = aes(x = (xmax-y), y = x, 
+                                  shape = team,
+                                  fill = team,
+                                  group = nfl_id,
+                                  size = factor(cp_preds),
+                                  colour = team),
+           alpha = 0.8) +  
+  
+geom_point(data = ft_1964_pf_off,
+           mapping = aes(x = (xmax-y), y = x),
+           color = "#002244",
+           size = 5,
+           alpha = 0.8) +
+  
+geom_point(data = ft_1964_pf_def,
+           mapping = aes(x = (xmax-y), y = x),
+           color = "#0073cf",
+           size = 5,
+           alpha = 0.8) +  
+  
+geom_point(data = ft_1964_pf_qb,
+           mapping = aes(x = (xmax-y), y = x),
+           color = "#002244",
+           size = 5,
+           alpha = 0.8) +  
+  
+geom_point(data = ft_1964_pf_fb,
+           mapping = aes(x = (xmax-y), y = x),
+           color = "#663300",
+           size = 4) +  
+  
+geom_text(data = ft_1964_pf, aes(x = (xmax-y), y = x, label = jersey_number), colour = "white", 
+        vjust = 0.36, size = 3.5) + 
+  
+theme_bw() + 
+  
+theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+      axis.title.y=element_blank(),
+      axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+      panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank()) +
+  
+  labs(title = "Pass Forward") +
+
+#applying plot limits
+ylim(ymin, ymax) + 
+coord_fixed()
+
+p1964_pf
+```
+
+```{r}
+p1964_cp1 <- p1964_pf + p1964_arrived
+ggsave("p1964_cp1.png", p1964_cp1)
+```
+
+
+
+

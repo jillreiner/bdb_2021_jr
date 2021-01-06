@@ -1,0 +1,695 @@
+---
+title: "Target Prob"
+author: "Jill Reiner"
+date: "12/10/2020"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(readr)
+library(dplyr)
+library(tidyverse)
+library(tidyr)
+library(stringr)
+library(janitor)
+library(mgcv)
+library(caret)
+library(car)
+library(ggplot2)
+library(ggthemes)
+library(patchwork)
+library(nflfastR)
+```
+
+Target Probability model: what is the probability that player x will receive the ball? (is_targ_receiver)
+
+-> Only want eligible receivers: WR, TE, RB, FB, HB
+
+-> Only want from ball_snap to pass_forward
+
+-> Will assess coverage ability of defender from snap to moment pass is thrown
+
+
+```{r}
+targ_prob_data <- min_dists %>%
+  mutate(is_targ_receiver = as.factor(is_targ_receiver))
+```
+
+```{r}
+targ_prob_data$pos_def[targ_prob_data$name_def == "Minkah Fitzpatrick"] <- "S"
+targ_prob_data$pos_def[targ_prob_data$name_def == "Derwin James"] <- "S"
+targ_prob_data$pos_def[targ_prob_data$name_def == "Holton Hill"] <- "DB"
+targ_prob_data$pos_def[targ_prob_data$name_def == "Isaiah Johnson"] <- "S"
+```
+
+```{r}
+set.seed(1220)
+
+train_i <- createDataPartition(y = targ_prob_data$is_targ_receiver, p = 0.75, list = FALSE) %>%
+  as.numeric()
+
+train_tp_data <- targ_prob_data[train_i,]
+test_tp_data <- targ_prob_data[-train_i,]
+```
+
+```{r}
+table(train_tp_data$is_targ_receiver)
+table(test_tp_data$is_targ_receiver)
+```
+
+```{r}
+init_tp_train2 <- train(is_targ_receiver ~ closest_opp_distance + dist_to_qb_off + dist_to_qb_def + dist_to_ball_off + dist_to_ball_def + x_off + y_off, 
+                            data = train_tp_data, method = "glm",
+                            trControl = trainControl("cv", number = 5),
+                            preProcess = c("center", "scale"),
+                            na.action = na.omit,
+                            family = "binomial")
+init_tp_train2
+
+init_tp_train3 <- train(is_targ_receiver ~ 
+                    closest_opp_distance + 
+                    dist_to_ball_off + dist_to_ball_def +
+                    dist_to_qb_off + dist_to_qb_def +
+                    s_off*s_def + o_off*o_def +
+                    a_off*a_def, 
+                            data = train_tp_data, method = "glm",
+                            trControl = trainControl("cv", number = 5),
+                            preProcess = c("center", "scale"),
+                            na.action = na.omit,
+                            family = "binomial")
+init_tp_train3
+```
+```{r}
+ggplot(varImp(init_tp_train3))
+```
+ 
+ + s_off*s_def + a_off*a_def
+```{r}
+targ_mod_2 <- glm(is_targ_receiver ~ 
+                    closest_opp_distance + dist_to_ball_off + dist_to_qb_off + dist_to_qb_def,
+                  family = "binomial", data = train_tp_data)
+
+summary(targ_mod_2)
+
+targ_prob_data$tp_preds <- predict(targ_mod_2, newdata = targ_prob_data, type = "response")
+```
+
+```{r}
+ball <- full_tracking %>%
+  filter(display_name == "Football") %>%
+  select(game_id, play_id, frame_id, event, x, y) %>%
+  rename(x_ball = x,
+         y_ball = y)
+```
+
+```{r}
+ball_tp <- ball %>%
+  filter(event %in% c("ball_snap", "pass_forward")) %>%
+  left_join(targ_prob_data, by = c("game_id",
+                                   "play_id",
+                                   "frame_id",
+                                   "event"))
+```
+
+```{r}
+full_tracking_3259 <- full_tracking %>%
+  filter(game_id == 2018091609 & play_id == 3259,
+         event %in% c("ball_snap", "pass_forward")) %>%
+  select(game_id, play_id, frame_id, event, yardline_number, display_name, nfl_id, jersey_number, position, team, x, y, o)
+
+targ_prob_3259 <- targ_prob_data %>%
+  filter(game_id == 2018091609 & play_id == 3259) %>%
+  select(game_id, play_id, frame_id, event, is_targ_receiver, tp_preds, name_off) %>%
+  rename(display_name = name_off)
+```
+
+```{r}
+full_tracking_3259 <- full_tracking_3259 %>%
+  left_join(targ_prob_3259, by = c("game_id",
+                                   "play_id",
+                                   "frame_id",
+                                   "event",
+                                   "display_name"))
+```
+
+```{r}
+nflfastR::teams_colors_logos
+```
+
+```{r}
+ft_3259_snap <- full_tracking_3259 %>%
+  filter(event == "ball_snap")
+
+ft_3259_snap_off <- ft_3259_snap %>%
+  filter(team == "home",
+         position != "QB") %>%
+  mutate(preds_as_pct = tp_preds * 100)
+
+ft_3259_snap_def <- ft_3259_snap %>%
+  filter(team == "away")
+
+ft_3259_snap_qb <- ft_3259_snap %>%
+  filter(position == "QB")
+
+ft_3259_snap_fb <- ft_3259_snap %>%
+  filter(team == "football")
+```
+
+```{r}
+ft_3259_pf <- full_tracking_3259 %>%
+  filter(event == "pass_forward")
+
+ft_3259_pf_off <- ft_3259_pf %>%
+  filter(team == "home",
+         position != "QB")
+
+ft_3259_pf_def <- ft_3259_pf %>%
+  filter(team == "away")
+
+ft_3259_pf_qb <- ft_3259_pf %>%
+  filter(position == "QB")
+
+ft_3259_pf_fb <- ft_3259_pf %>%
+  filter(team == "football")
+```
+
+At snap:
+```{r}
+cols_fill <- c("#002244", "#97233f", "#663300")
+cols_col <- c("#000000", "#663300", "#000000")
+
+# General field boundaries
+xmin <- 0
+xmax <- 160/3
+hash.right <- 38.35
+hash.left <- 12
+hash.width <- 3.3
+
+# Specific boundaries for a given play
+ymin <- max(round(min(ft_3259_pf_off$x, na.rm = TRUE) - 10, -1), 0)
+ymax <- min(round(max(ft_3259_pf_off$x, na.rm = TRUE) + 10, -1), 120)
+
+#hash marks
+df.hash <- expand.grid(x = c(0, 23.36667, 29.96667, xmax), y = (10:110))
+df.hash <- df.hash %>% filter(!(floor(y %% 5) == 0))
+df.hash <- df.hash %>% filter(y < ymax, y > ymin)
+
+p3259_snap <- ggplot()+
+  
+#setting size and color parameters
+scale_size_manual(values = c(5,6,7,9,12), guide = FALSE) + 
+scale_shape_manual(values = c(21, 16, 21), guide = FALSE) +
+scale_fill_manual(values = cols_fill, guide = FALSE) + 
+scale_colour_manual(values = cols_col, guide = FALSE) +
+
+#adding hash marks
+annotate("text", x = df.hash$x[df.hash$x < 55/2], 
+       y = df.hash$y[df.hash$x < 55/2], label = "_", hjust = 0, vjust = -0.2) + 
+annotate("text", x = df.hash$x[df.hash$x > 55/2], 
+       y = df.hash$y[df.hash$x > 55/2], label = "_", hjust = 1, vjust = -0.2) + 
+
+#adding yard lines
+annotate("segment", x = xmin, 
+       y = seq(max(10, ymin), min(ymax, 110), by = 5), 
+       xend =  xmax, 
+       yend = seq(max(10, ymin), min(ymax, 110), by = 5)) + 
+  
+#adding field yardline text
+annotate("text", x = rep(hash.left, 11), y = seq(10, 110, by = 10), 
+       label = c("G   ", seq(10, 50, by = 10), rev(seq(10, 40, by = 10)), "   G"), 
+       angle = 270, size = 4) + 
+annotate("text", x = rep((xmax - hash.left), 11), y = seq(10, 110, by = 10), 
+       label = c("   G", seq(10, 50, by = 10), rev(seq(10, 40, by = 10)), "G   "), 
+       angle = 90, size = 4) + 
+
+#adding field exterior
+annotate("segment", x = c(xmin, xmin, xmax, xmax), 
+       y = c(ymin, ymax, ymax, ymin), 
+       xend = c(xmin, xmax, xmax, xmin), 
+       yend = c(ymax, ymax, ymin, ymin), colour = "black") + 
+  
+#adding players
+geom_point(data = ft_3259_snap_off,
+           mapping = aes(x = (xmax-y), y = x, 
+                                  shape = team,
+                                  fill = team,
+                                  group = nfl_id,
+                                  size = factor(tp_preds),
+                                  colour = team),
+           alpha = 0.8) +  
+  
+geom_point(data = ft_3259_snap_def,
+           mapping = aes(x = (xmax-y), y = x),
+           color = "#97233f",
+           size = 5,
+           alpha = 0.8) +  
+  
+geom_point(data = ft_3259_snap_qb,
+           mapping = aes(x = (xmax-y), y = x),
+           color = "#b3995d",
+           size = 5,
+           alpha = 0.8) +  
+  
+geom_point(data = ft_3259_snap_fb,
+           mapping = aes(x = (xmax-y), y = x),
+           color = "#663300",
+           size = 4) +  
+  
+geom_text(data = ft_3259_snap, aes(x = (xmax-y), y = x, label = jersey_number), colour = "white", 
+        vjust = 0.36, size = 3.5) + 
+  
+theme_bw() + 
+  
+theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+      axis.title.y=element_blank(),
+      axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+      panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank()) +
+  
+  labs(title = "Snap") +
+
+#applying plot limits
+ylim(ymin, ymax) + 
+coord_fixed()
+
+p3259_snap
+```
+
+At pass:
+```{r}
+cols_fill <- c("#002244", "#97233f", "#663300")
+cols_col <- c("#000000", "#663300", "#000000")
+
+# General field boundaries
+xmin <- 0
+xmax <- 160/3
+hash.right <- 38.35
+hash.left <- 12
+hash.width <- 3.3
+
+# Specific boundaries for a given play
+ymin <- max(round(min(ft_3259_pf_off$x, na.rm = TRUE) - 10, -1), 0)
+ymax <- min(round(max(ft_3259_pf_off$x, na.rm = TRUE) + 10, -1), 120)
+
+#hash marks
+df.hash <- expand.grid(x = c(0, 23.36667, 29.96667, xmax), y = (10:110))
+df.hash <- df.hash %>% filter(!(floor(y %% 5) == 0))
+df.hash <- df.hash %>% filter(y < ymax, y > ymin)
+
+p3259_pf <- ggplot()+
+  
+#setting size and color parameters
+scale_size_manual(values = c(5,6,7,9,12), guide = FALSE) + 
+scale_shape_manual(values = c(21, 16, 21), guide = FALSE) +
+scale_fill_manual(values = cols_fill, guide = FALSE) + 
+scale_colour_manual(values = cols_col, guide = FALSE) +
+
+#adding hash marks
+annotate("text", x = df.hash$x[df.hash$x < 55/2], 
+       y = df.hash$y[df.hash$x < 55/2], label = "_", hjust = 0, vjust = -0.2) + 
+annotate("text", x = df.hash$x[df.hash$x > 55/2], 
+       y = df.hash$y[df.hash$x > 55/2], label = "_", hjust = 1, vjust = -0.2) + 
+
+#adding yard lines
+annotate("segment", x = xmin, 
+       y = seq(max(10, ymin), min(ymax, 110), by = 5), 
+       xend =  xmax, 
+       yend = seq(max(10, ymin), min(ymax, 110), by = 5)) + 
+  
+#adding field yardline text
+annotate("text", x = rep(hash.left, 11), y = seq(10, 110, by = 10), 
+       label = c("G   ", seq(10, 50, by = 10), rev(seq(10, 40, by = 10)), "   G"), 
+       angle = 270, size = 4) + 
+annotate("text", x = rep((xmax - hash.left), 11), y = seq(10, 110, by = 10), 
+       label = c("   G", seq(10, 50, by = 10), rev(seq(10, 40, by = 10)), "G   "), 
+       angle = 90, size = 4) + 
+
+#adding field exterior
+annotate("segment", x = c(xmin, xmin, xmax, xmax), 
+       y = c(ymin, ymax, ymax, ymin), 
+       xend = c(xmin, xmax, xmax, xmin), 
+       yend = c(ymax, ymax, ymin, ymin), colour = "black") + 
+  
+#adding players
+geom_point(data = ft_3259_pf_off,
+           mapping = aes(x = (xmax-y), y = x, 
+                                  shape = team,
+                                  fill = team,
+                                  group = nfl_id,
+                                  size = factor(tp_preds),
+                                  colour = team),
+            alpha = 0.8) +  
+  
+geom_point(data = ft_3259_pf_def,
+           mapping = aes(x = (xmax-y), y = x),
+           color = "#97233f",
+           size = 5,
+           alpha = 0.8) +  
+  
+geom_point(data = ft_3259_pf_qb,
+           mapping = aes(x = (xmax-y), y = x),
+           color = "#b3995d",
+           size = 5,
+           alpha = 0.8) +  
+  
+geom_point(data = ft_3259_pf_fb,
+           mapping = aes(x = (xmax-y), y = x),
+           color = "#663300",
+           size = 4) +  
+  
+geom_text(data = ft_3259_pf, aes(x = (xmax-y), y = x, label = jersey_number), colour = "white", 
+        vjust = 0.36, size = 3.5) + 
+  
+theme_bw() + 
+  
+theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+      axis.title.y=element_blank(),
+      axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+      panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank()) +
+  
+labs(title = "Pass Forward", caption = "J.Goff pass short middle to C.Kupp to ARZ 14 for 10 yards (T.Boston).") +
+
+#applying plot limits
+ylim(ymin, ymax) + 
+coord_fixed()
+
+p3259_pf
+```
+
+```{r}
+p3259_snap + p3259_pf
+#ggsave("p3259_tp.png", p3259)
+```
+
+```{r}
+full_tracking_1964_tp <- full_tracking %>%
+  filter(game_id == 2018092310 & play_id == 1964,
+         event %in% c("ball_snap", "pass_forward")) %>%
+  select(game_id, play_id, frame_id, event, yardline_number, display_name, nfl_id, jersey_number, position, team, x, y, o)
+
+targ_prob_1964 <- targ_prob_data %>%
+  filter(game_id == 2018092310 & play_id == 1964) %>%
+  select(game_id, play_id, frame_id, event, is_targ_receiver, tp_preds, name_off) %>%
+  rename(display_name = name_off)
+```
+
+```{r}
+full_tracking_1964_tp <- full_tracking_1964_tp %>%
+  left_join(targ_prob_1964, by = c("game_id",
+                                   "play_id",
+                                   "frame_id",
+                                   "event",
+                                   "display_name"))
+```
+
+```{r}
+ft_1964_snap <- full_tracking_1964_tp %>%
+  filter(event == "ball_snap")
+
+ft_1964_snap_off <- ft_1964_snap %>%
+  filter(team == "home",
+         position != "QB")
+
+ft_1964_snap_def <- ft_1964_snap %>%
+  filter(team == "away")
+
+ft_1964_snap_qb <- ft_1964_snap %>%
+  filter(position == "QB")
+
+ft_1964_snap_fb <- ft_1964_snap %>%
+  filter(team == "football")
+```
+
+```{r}
+ft_1964_pf <- full_tracking_1964_tp %>%
+  filter(event == "pass_forward")
+
+ft_1964_pf_off <- ft_1964_pf %>%
+  filter(team == "home",
+         position != "QB")
+
+ft_1964_pf_def <- ft_1964_pf %>%
+  filter(team == "away")
+
+ft_1964_pf_qb <- ft_1964_pf %>%
+  filter(position == "QB")
+
+ft_1964_pf_fb <- ft_1964_pf %>%
+  filter(team == "football")
+```
+
+At snap (1964):
+```{r}
+cols_fill <- c("#002244", "#97233f", "#663300")
+cols_col <- c("#000000", "#663300", "#000000")
+
+# General field boundaries
+xmin <- 0
+xmax <- 160/3
+hash.right <- 38.35
+hash.left <- 12
+hash.width <- 3.3
+
+# Specific boundaries for a given play
+ymin <- max(round(min(ft_1964_pf_off$x, na.rm = TRUE) - 10, -1), 0)
+ymax <- min(round(max(ft_1964_pf_off$x, na.rm = TRUE) + 10, -1), 120)
+
+#hash marks
+df.hash <- expand.grid(x = c(0, 23.36667, 29.96667, xmax), y = (10:110))
+df.hash <- df.hash %>% filter(!(floor(y %% 5) == 0))
+df.hash <- df.hash %>% filter(y < ymax, y > ymin)
+
+p1964_snap <- ggplot()+
+  
+#setting size and color parameters
+scale_size_manual(values = c(5,6,7,9,12), guide = FALSE) + 
+scale_shape_manual(values = c(21, 16, 21), guide = FALSE) +
+scale_fill_manual(values = cols_fill, guide = FALSE) + 
+scale_colour_manual(values = cols_col, guide = FALSE) +
+
+#adding hash marks
+annotate("text", x = df.hash$x[df.hash$x < 55/2], 
+       y = df.hash$y[df.hash$x < 55/2], label = "_", hjust = 0, vjust = -0.2) + 
+annotate("text", x = df.hash$x[df.hash$x > 55/2], 
+       y = df.hash$y[df.hash$x > 55/2], label = "_", hjust = 1, vjust = -0.2) + 
+
+#adding yard lines
+annotate("segment", x = xmin, 
+       y = seq(max(10, ymin), min(ymax, 110), by = 5), 
+       xend =  xmax, 
+       yend = seq(max(10, ymin), min(ymax, 110), by = 5)) + 
+  
+#adding field yardline text
+annotate("text", x = rep(hash.left, 11), y = seq(10, 110, by = 10), 
+       label = c("G   ", seq(10, 50, by = 10), rev(seq(10, 40, by = 10)), "   G"), 
+       angle = 270, size = 4) + 
+annotate("text", x = rep((xmax - hash.left), 11), y = seq(10, 110, by = 10), 
+       label = c("   G", seq(10, 50, by = 10), rev(seq(10, 40, by = 10)), "G   "), 
+       angle = 90, size = 4) + 
+
+#adding field exterior
+annotate("segment", x = c(xmin, xmin, xmax, xmax), 
+       y = c(ymin, ymax, ymax, ymin), 
+       xend = c(xmin, xmax, xmax, xmin), 
+       yend = c(ymax, ymax, ymin, ymin), colour = "black") + 
+  
+#adding players
+geom_point(data = ft_1964_snap_off,
+           mapping = aes(x = (xmax-y), y = x, 
+                                  shape = team,
+                                  fill = team,
+                                  group = nfl_id,
+                                  size = factor(tp_preds),
+                                  colour = team),
+           alpha = 0.8) +  
+  
+geom_point(data = ft_1964_snap_def,
+           mapping = aes(x = (xmax-y), y = x),
+           color = "#0073cf",
+           size = 5,
+           alpha = 0.8) +  
+  
+geom_point(data = ft_1964_snap_qb,
+           mapping = aes(x = (xmax-y), y = x),
+           color = "#002244",
+           size = 5,
+           alpha = 0.8) +  
+  
+geom_point(data = ft_1964_snap_fb,
+           mapping = aes(x = (xmax-y), y = x),
+           color = "#663300",
+           size = 4) +  
+  
+geom_text(data = ft_1964_snap, aes(x = (xmax-y), y = x, label = jersey_number), colour = "white", 
+        vjust = 0.36, size = 3.5) + 
+  
+theme_bw() + 
+  
+theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+      axis.title.y=element_blank(),
+      axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+      panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank()) +
+  
+  labs(title = "Snap") +
+
+#applying plot limits
+ylim(ymin, ymax) + 
+coord_fixed()
+
+p1964_snap
+```
+At pass_forward (1964):
+```{r}
+cols_fill <- c("#002244", "#97233f", "#663300")
+cols_col <- c("#000000", "#663300", "#000000")
+
+# General field boundaries
+xmin <- 0
+xmax <- 160/3
+hash.right <- 38.35
+hash.left <- 12
+hash.width <- 3.3
+
+# Specific boundaries for a given play
+ymin <- max(round(min(ft_1964_pf_off$x, na.rm = TRUE) - 10, -1), 0)
+ymax <- min(round(max(ft_1964_pf_off$x, na.rm = TRUE) + 10, -1), 120)
+
+#hash marks
+df.hash <- expand.grid(x = c(0, 23.36667, 29.96667, xmax), y = (10:110))
+df.hash <- df.hash %>% filter(!(floor(y %% 5) == 0))
+df.hash <- df.hash %>% filter(y < ymax, y > ymin)
+
+p1964_pf <- ggplot()+
+  
+#setting size and color parameters
+scale_size_manual(values = c(5,6,7,9,12)) + 
+scale_shape_manual(values = c(21, 16, 21), guide = FALSE) +
+scale_fill_manual(values = cols_fill, guide = FALSE) + 
+scale_colour_manual(values = cols_col, guide = FALSE) +
+
+#adding hash marks
+annotate("text", x = df.hash$x[df.hash$x < 55/2], 
+       y = df.hash$y[df.hash$x < 55/2], label = "_", hjust = 0, vjust = -0.2) + 
+annotate("text", x = df.hash$x[df.hash$x > 55/2], 
+       y = df.hash$y[df.hash$x > 55/2], label = "_", hjust = 1, vjust = -0.2) + 
+
+#adding yard lines
+annotate("segment", x = xmin, 
+       y = seq(max(10, ymin), min(ymax, 110), by = 5), 
+       xend =  xmax, 
+       yend = seq(max(10, ymin), min(ymax, 110), by = 5)) + 
+  
+#adding field yardline text
+annotate("text", x = rep(hash.left, 11), y = seq(10, 110, by = 10), 
+       label = c("G   ", seq(10, 50, by = 10), rev(seq(10, 40, by = 10)), "   G"), 
+       angle = 270, size = 4) + 
+annotate("text", x = rep((xmax - hash.left), 11), y = seq(10, 110, by = 10), 
+       label = c("   G", seq(10, 50, by = 10), rev(seq(10, 40, by = 10)), "G   "), 
+       angle = 90, size = 4) + 
+
+#adding field exterior
+annotate("segment", x = c(xmin, xmin, xmax, xmax), 
+       y = c(ymin, ymax, ymax, ymin), 
+       xend = c(xmin, xmax, xmax, xmin), 
+       yend = c(ymax, ymax, ymin, ymin), colour = "black") + 
+  
+#adding players
+geom_point(data = ft_1964_pf_off,
+           mapping = aes(x = (xmax-y), y = x, 
+                                  shape = team,
+                                  fill = team,
+                                  group = nfl_id,
+                                  size = factor(tp_preds),
+                                  colour = team),
+           alpha = 0.8) +  
+  
+geom_point(data = ft_1964_pf_def,
+           mapping = aes(x = (xmax-y), y = x),
+           color = "#0073cf",
+           size = 5,
+           alpha = 0.8) +  
+  
+geom_point(data = ft_1964_pf_qb,
+           mapping = aes(x = (xmax-y), y = x),
+           color = "#002244",
+           size = 5,
+           alpha = 0.8) +  
+  
+geom_point(data = ft_1964_pf_fb,
+           mapping = aes(x = (xmax-y), y = x),
+           color = "#663300",
+           size = 4) +  
+  
+geom_text(data = ft_1964_pf, aes(x = (xmax-y), y = x, label = jersey_number), colour = "white", 
+        vjust = 0.36, size = 3.5) + 
+  
+theme_bw() + 
+  
+theme(axis.title.x=element_blank(),
+        axis.text.x=element_blank(),
+        axis.ticks.x=element_blank(),
+      axis.title.y=element_blank(),
+      axis.text.y=element_blank(),
+        axis.ticks.y=element_blank(),
+      panel.border = element_blank(),
+          panel.grid.major = element_blank(),
+          panel.grid.minor = element_blank()) +
+  
+  labs(title = "Pass Forward", caption = "J.Goff pass short left to C.Kupp ran ob at LAC 42 for 4 yards (D.King).") +
+
+#applying plot limits
+ylim(ymin, ymax) + 
+coord_fixed()
+
+p1964_pf
+```
+
+```{r}
+p1964_snap + p1964_pf
+#ggsave("p1964_tp.png", p1964_tp)
+```
+
+```{r}
+same_defenders_snap_pf <- targ_prob_data %>%
+  group_by(game_id, play_id, name_off) %>%
+  mutate(unique_defender = n_distinct(nfl_id_def)) %>%
+  ungroup() %>%
+  filter(unique_defender == 1,
+         pos_def %in% c("CB", "DB", "S", "SS", "FS"))
+```
+
+```{r}
+summarized_tp <- same_defenders_snap_pf %>%
+  group_by(game_id, play_id, name_off) %>%
+  mutate(tp_diff =  tp_preds - lag(tp_preds, default = tp_preds[1])) %>%
+  ungroup()
+```
+
+this is the one
+```{r}
+targ_pred_stats <- summarized_tp %>%
+  group_by(nfl_id_def, name_def, pos_def) %>%
+  summarise(targets_averted = sum(tp_diff)) #%>%
+  #left_join(times_closest_defender_tp, by = c("name_def", "nfl_id_def")) #%>%
+  #filter(times_closest_def > 30)
+```
+
+```{r}
+test <- summarized_tp %>%
+  select(game_id, play_id, nfl_id_off, name_off, event, nfl_id_def, name_def, pos_def, tp_preds, tp_diff)
+```
+

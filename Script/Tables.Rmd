@@ -1,0 +1,117 @@
+---
+title: "Tables"
+author: "Jill Reiner"
+date: "1/4/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(gt)
+```
+
+```{r}
+defense_teams <- get_defense(full_tracking) %>%
+  select(name_def, nfl_id_def, defensive_team) %>%
+  group_by(name_def, nfl_id_def, defensive_team) %>%
+  summarise()
+```
+
+```{r}
+full_def_stats_w_teams <- full_def_stats %>%
+  left_join(defense_teams, by = c("name_def", "nfl_id_def")) %>%
+  rename(team = defensive_team)
+```
+
+```{r}
+top_targ_averted <- full_def_stats_w_teams %>%
+  select(name_def, team, times_targ, targets_averted) %>%
+  arrange(targets_averted) %>%
+  head(15)
+```
+
+```{r}
+top_closeout <- full_def_stats_w_teams %>%
+  select(name_def, team, times_targ, closeout) %>%
+  arrange(closeout) %>%
+  head(15)
+```
+
+```{r}
+top_passes_defended <- full_def_stats_w_teams %>%
+  select(name_def, team, times_targ, passes_defended) %>%
+  arrange(passes_defended) %>%
+  filter(team != "NYG") %>%
+  head(15)
+```
+
+woo tables
+```{r}
+top_targ_averted %>%
+  gt() %>%
+  tab_header(
+    title = md("**Top 15 Defenders in Targets Averted**"),
+    subtitle = md("2018 NFL Season")) %>%
+  tab_style(
+    style = list(
+      cell_text(weight = "bold")),
+    locations = cells_column_labels(everything())) %>%
+  data_color(columns = vars(targets_averted),
+             colors = scales::col_numeric(
+                  c("blue", "lightblue", "white"),
+                  domain = NULL),
+             ) %>%
+  cols_label(name_def = "Player",
+             team = "Team",
+             times_targ = "Times Targeted",
+             targets_averted = "Targets Averted") %>%
+
+gtsave("top_targ_averted.png")
+```
+
+```{r}
+top_closeout %>%
+  gt() %>%
+  tab_header(
+    title = md("**Top 15 Defenders in Closeout Skill**"),
+    subtitle = md("2018 NFL Season")) %>%
+  tab_style(
+    style = list(
+      cell_text(weight = "bold")),
+    locations = cells_column_labels(everything())) %>%
+  data_color(columns = vars(closeout),
+             colors = scales::col_numeric(
+                  c("blue", "lightblue", "white"),
+                  domain = NULL),
+             ) %>%
+  cols_label(name_def = "Player",
+             team = "Team",
+             times_targ = "Times Targeted",
+             closeout = "Closeout") %>%
+  
+gtsave("top_closeout.png")
+```
+
+```{r}
+top_passes_defended %>%
+  gt() %>%
+  tab_header(
+    title = md("**Top 15 Defenders in Passes Defended**"),
+    subtitle = md("2018 NFL Season")) %>%
+  tab_style(
+    style = list(
+      cell_text(weight = "bold")),
+    locations = cells_column_labels(everything())) %>%
+  data_color(columns = vars(passes_defended),
+             colors = scales::col_numeric(
+                  c("blue", "lightblue", "white"),
+                  domain = NULL),
+             ) %>%
+  cols_label(name_def = "Player",
+             team = "Team",
+             times_targ = "Times Targeted",
+             passes_defended = "Passes Defended") %>%
+  
+gtsave("top_passes_defended.png")
+```
+
